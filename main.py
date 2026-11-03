@@ -266,4 +266,245 @@ DEFAULT_EARNINGS_WEEK_PATTERN = {
 EMPTY_M = {
     "ok": False, "has_today": False, "n_today": 0, "last_ts": None, "last_close": 0.0,
     "rsi": 50.0, "adx": 0.0, "ema9": 0.0, "ema21": 0.0, "ema9_15m": 0.0, "ema21_15m": 0.0,
-    "vwap": 0.0, "vwap_ok": False
+    "vwap": 0.0, "vwap_ok": False, "vwap_up1": 0.0, "vwap_dn1": 0.0, "vwap_up2": 0.0, "vwap_dn2": 0.0,
+    "atr": 0.0, "orh": 0.0, "orl": 0.0, "orb_ready": False, "day_high": 0.0, "day_low": 0.0,
+    "day_open": 0.0, "vol_spike": 1.0, "monthly_move_pct": 0.0, "stale_min": 0.0,
+    "atr15": 0.0, "adx15": 0.0, "z15_hi": 0.0, "z15_lo": 0.0, "z15_rng_atr": 0.0, "z15_cons": False, "vwap_cross": 0,
+    "bar_pos": 0.5, "pdh": 0.0, "pdl": 0.0,
+}
+
+
+# ====== SECTION: UTILS ======
+def now_ist() -> datetime:
+    return datetime.now(IST)
+
+
+def secret(name: str, default: str = "") -> str:
+    try:
+        return st.secrets.get(name, default)
+    except Exception:
+        return default
+
+
+def esc(x) -> str:
+    return html.escape(str(x))
+
+
+def show_df(data, hide_index: bool = True):
+    try:
+        st.dataframe(data, use_container_width=True, hide_index=hide_index)
+    except Exception:
+        st.dataframe(data, hide_index=hide_index)
+
+
+def get_week_of_month(d: date) -> int:
+    return (d.day - 1) // 7 + 1
+
+
+def iso_year_week(d: date) -> tuple:
+    iso = d.isocalendar()
+    return int(iso[0]), int(iso[1])
+
+
+def market_open(dt: datetime | None = None) -> bool:
+    dt = dt or now_ist()
+    if dt.weekday() >= 5 or dt.date() in NSE_HOLIDAYS:
+        return False
+    return dtime(9, 15) <= dt.time() <= dtime(15, 30)
+
+
+def trading_days_delta(a: date, b: date) -> int:
+    """a se b tak trading days. b > a => positive."""
+    if a == b:
+        return 0
+    step = 1 if b > a else -1
+    n, cur = 0, a
+    while cur != b and abs(n) < 400:
+        cur += timedelta(days=step)
+        if cur.weekday() < 5 and cur not in NSE_HOLIDAYS:
+            n += step
+    return n
+
+
+def to_date(x):
+    try:
+        if x is None or (isinstance(x, float) and math.isnan(x)) or str(x).strip() in ("", "NaT", "None"):
+            return None
+        return pd.to_datetime(x, dayfirst=True).date()
+    except Exception:
+        return None
+
+
+def exp_to_str(x) -> str:
+    try:
+        if isinstance(x, (int, float)):
+            return datetime.fromtimestamp(float(x) / 1000.0, IST).date().isoformat()
+        return str(x)[:10]
+    except Exception:
+        return ""
+
+
+def safe_float(x, default: float = 0.0) -> float:
+    try:
+        v = float(x)
+        return default if math.isnan(v) else v
+    except Exception:
+        return default
+
+
+def generate_trade_special_note(rec: dict) -> str:
+    """Trade ka Hinglish 'Special Note' (profit/loss ka karan + sudhar)."""
+    pnl = safe_float(rec.get("pnl_rs"))
+    pts = safe_float(rec.get("pts"))
+    side = str(rec.get("side", "LONG")).upper()
+    d = 1 if side == "LONG" else -1
+    reason = str(rec.get("exit_reason", "")).upper()
+    itype = str(rec.get("instrument_type", "INDEX"))
+    entry = safe_float(rec.get("entry"))
+    sl0 = safe_float(rec.get("sl0")) or safe_float(rec.get("sl"))
+    mfe = safe_float(rec.get("mfe"))
+    score = safe_float(rec.get("bull_pwr"), float("nan"))
+    pcr = safe_float(rec.get("pcr"))
+    vix = safe_float(rec.get("vix"))
+    mins = safe_float(rec.get("mins"), float("nan"))
+
+    risk = abs(entry - sl0) if (entry and sl0 and abs(entry - sl0) > 1e-6) else 0.0
+    r_mult = (pts / risk) if risk > 0 else 0.0
+    parts = []
+
+    # ---- setup quality ----
+    setup = []
+    if itype == "INDEX" and not math.isnan(score):
+        aligned = score >= 60 if d == 1 else score <= 40
+        setup.append(f"Bull power {score:.0f}% ({'direction ke saath' if aligned else 'direction ke against/kamzor'})")
+    elif itype != "INDEX" and not math.isnan(score):
+        strong = abs(score) >= 5
+        setup.append(f"Entry score {score:+.0f} ({'strong' if strong else 'average'})")
+    if pcr > 0:
+        pcr_ok = pcr >= 1.0 if d == 1 else pcr <= 1.0
+        setup.append(f"PCR {pcr:.2f} ({'favour me' if pcr_ok else 'ulta'})")
+
+    if abs(pnl) < 1e-9:
+        parts.append("⚪ BREAKEVEN: Trade flat band hua (trailing SL entry par laga tha).")
+        if mfe > 0 and risk > 0:
+            parts.append(f"Beech me {mfe / risk:.1f}R tak profit tha - jab 1R mile tab partial profit lene par vichar karo.")
+
+    elif pnl > 0:
+        parts.append(f"🟢 PROFIT Rs {pnl:,.0f}" + (f" ({r_mult:.1f}R)" if r_mult is not None else "") + f": {side} trade chala.")
+        if "TARGET" in reason:
+            parts.append("Target hit - SL/Target ka ATR-based plan sahi baitha.")
+        elif "TRAIL" in reason:
+            parts.append("Trailing SL ne profit lock kiya - trail ka system kaam kar raha hai.")
+        elif "EOD" in reason:
+            parts.append("EOD par profit me band hua - trade din bhar chala.")
+        elif "FADE" in reason or "OPPOSITE" in reason or "FLIP" in reason:
+            parts.append("Signal palatne par samay se exit kiya - achha discipline.")
+        if setup:
+            parts.append("Setup: " + ", ".join(setup) + ".")
+        if mfe > 0 and pts > 0 and mfe > pts * 1.5:
+            parts.append(f"⚠ Peak profit {mfe:.1f} pts tha par mila {pts:.1f} pts - "
+                         f"{(1 - pts / mfe) * 100:.0f}% wapas gaya. Trailing thodi tight karne par vichar karo.")
+        parts.append("SUDHAR: Isi entry timing aur alignment ko repeat karo; size mat badhao jab tak 30+ trades ka data na ho.")
+
+    else:
+        parts.append(f"🔴 LOSS Rs {pnl:,.0f}" + (f" ({r_mult:.1f}R)" if r_mult is not None else "") +
+                     f": {side} trade fail hua, exit: {rec.get('exit_reason', '-')}.")
+        if "SL" in reason:
+            if not math.isnan(mins) and mins <= 10:
+                parts.append(f"SL sirf {mins:.0f} min me lag gaya - entry chase/whipsaw ka sanket. Pullback ka wait karo.")
+            else:
+                parts.append("SL hit: market ne entry ke ulta reversal kiya.")
+        elif "TIME STOP" in reason:
+            parts.append("Time-stop: trade der tak chala par aage nahi badha - sust chaal me paisa atkane se behtar hai nikalna.")
+        elif "OPPOSITE" in reason or "FLIP" in reason or "FADE" in reason:
+            parts.append("Signal jaldi palat gaya - confirmation cycles/min score badhao.")
+        elif "KILL" in reason or "MAX LOSS" in reason or "UNPROTECTED" in reason or "HALT" in reason:
+            parts.append("Safety rule se force-exit hua - risk system ne apna kaam kiya.")
+        elif "EOD" in reason:
+            parts.append("Din bhar trade chala par EOD par loss me band - trend/momentum nahi tha.")
+        if vix > 20:
+            parts.append(f"VIX {vix:.1f} high tha - false breakout ke chance zyada.")
+        if setup:
+            parts.append("Setup: " + ", ".join(setup) + ".")
+        if "ulta" in " ".join(setup):
+            parts.append("PCR trade ke ulta tha (sirf jaankari - v7.7 me PCR filter nahi hai).")
+        if mfe > 0 and risk > 0 and mfe >= risk:
+            parts.append(f"⚠ Trade pehle {mfe / risk:.1f}R profit me tha phir loss me gaya - breakeven trail jaldi lagao.")
+        parts.append("SUDHAR: 15m consolidation aur high-VIX din par filter kadi karo, aur confirmation candle ka wait karo.")
+
+    part = safe_float(rec.get("part_pnl"))
+    if part:
+        parts.append(f"Partial profit Rs {part:,.0f} pehle hi book ho chuka tha (final P&L me judaa hai).")
+    return " | ".join(parts)
+
+
+def _trade_minutes(rec: dict) -> float:
+    try:
+        a = pd.to_datetime(f"{rec['dt']} {rec['entry_time']}")
+        b = pd.to_datetime(f"{rec['dt']} {rec['exit_time']}")
+        return round((b - a).total_seconds() / 60.0, 1)
+    except Exception:
+        return float("nan")
+
+
+# ====== SECTION: DATABASE (Live Open/Update/Close & Auto-Migration) ======
+DB_ERR = ""
+
+
+@contextmanager
+def db():
+    conn = sqlite3.connect(DB_PATH, timeout=15)
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def init_db():
+    global DB_ERR
+    try:
+        with db() as conn:
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+            except Exception:
+                pass
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS signal_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, dt TEXT, time_ist TEXT, event TEXT,
+                    spot REAL, bull_pwr REAL, bear_pwr REAL, pcr REAL, vix REAL,
+                    sl REAL, tgt REAL, reason TEXT
+                )""")
+            # v7.5: har full scan (5-min slot) me har stock ke saare filter values - baad me analysis / backtest ke liye
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS scan_log (
+                    dt TEXT, slot TEXT, time_ist TEXT, sym TEXT, action TEXT, score REAL, ltp REAL, day_pct REAL,
+                    stock_pcr REAL, data TEXT, PRIMARY KEY (dt, slot, sym)
+                )""")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS trade_journal (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    dt TEXT,
+                    symbol TEXT DEFAULT 'INDEX',
+                    instrument_type TEXT DEFAULT 'INDEX',
+                    side TEXT,
+                    status TEXT DEFAULT 'CLOSED',
+                    entry_time TEXT,
+                    exit_time TEXT,
+                    entry REAL,
+                    exit REAL,
+                    sl REAL DEFAULT 0.0,
+                    tgt REAL DEFAULT 0.0,
+                    sl0 REAL DEFAULT 0.0,
+                    pts REAL,
+                    pnl_rs REAL,
+                    lots INTEGER,
+                    lot_size INTEGER,
+                    exit_reason TEXT,
+                    mfe REAL,
+                    mae REAL,
+                    bull_pwr REAL,
+                    pcr REAL,
+                    vix REAL,
+                    mode TEXT DEFAULT 'LIVE'
+                )""")
