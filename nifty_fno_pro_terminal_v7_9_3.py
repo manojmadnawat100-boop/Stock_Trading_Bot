@@ -1,5 +1,7 @@
 from nicegui import ui
 
+@ui.page('/')
+def index():
 # -*- coding: utf-8 -*-
 """
 Institutional Nifty 50 & Bank Nifty F&O Pro Terminal  -  v7.9.3 (SCORE-7 + 9:30) + v7.9.2 (ALL-15) + v7.9.1 (REVERSE-MODE) + v7.9 (SECTOR-HEDGE + INDEX-DIR + TICK-SL + SOFT-HALT + BURST-CD) + v7.8.3 (CONFIRM-1 + WHY-COL + TS-FIX) NO-STRICT + 2-CYCLE CONFIRM + CONFIRM-LOG + NO-PCR-FILTER + PULLBACK-ENTRY + SL-MODE (Equity Intraday + LIVE + Choppy NO-TRADE + Master-loop safety + Profit protect)
