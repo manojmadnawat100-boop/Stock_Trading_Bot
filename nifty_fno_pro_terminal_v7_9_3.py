@@ -1,3 +1,23 @@
+from nicegui import ui
+
+@ui.page('/')
+def index():
+    pcr = 1.25  # baad me ye Upstox API se aayega
+    stock = "RELIANCE"
+    
+    if pcr > 1.0:
+        signal, col = "LONG", "green"
+    elif pcr < 0.9:
+        signal, col = "SHORT", "red"
+    else:
+        signal, col = "NO TRADE", "orange"
+
+    with ui.column().classes('items-center w-full p-8'):
+        ui.label('Ustad Stock PCR Dashboard').classes('text-3xl font-bold')
+        ui.label(f'{stock} PCR: {pcr}').classes('text-xl')
+        ui.button(f'SIGNAL: {signal}').props(f'color={col} size=lg')
+
+ui.run(host='0.0.0.0', port=8080) 
 # -*- coding: utf-8 -*-
 """
 Institutional Nifty 50 & Bank Nifty F&O Pro Terminal  -  v7.9.3 (SCORE-7 + 9:30) + v7.9.2 (ALL-15) + v7.9.1 (REVERSE-MODE) + v7.9 (SECTOR-HEDGE + INDEX-DIR + TICK-SL + SOFT-HALT + BURST-CD) + v7.8.3 (CONFIRM-1 + WHY-COL + TS-FIX) NO-STRICT + 2-CYCLE CONFIRM + CONFIRM-LOG + NO-PCR-FILTER + PULLBACK-ENTRY + SL-MODE (Equity Intraday + LIVE + Choppy NO-TRADE + Master-loop safety + Profit protect)
